@@ -1073,8 +1073,17 @@ function confirmOrder(){
   // Show saving status
   if(ea) ea.innerHTML = '<div style="margin-top:12px;font-size:13px;color:rgba(255,255,255,.5);">&#128336; Saving your order...</div>';
 
-  // Build GET URL with all order params (bypasses CORS)
-  var orderParams = '?action=saveOrder' +
+  // Save order to Google Sheets via JSONP
+  var cbName = '_gsOrder_' + Date.now();
+  window[cbName] = function(data){
+    delete window[cbName];
+    var el = document.getElementById(cbName);
+    if(el) el.parentNode.removeChild(el);
+  };
+  var s = document.createElement('script');
+  s.id = cbName;
+  s.src = 'https://script.google.com/macros/s/AKfycbwmzWg7OJL6ffR7zFwJJ-nKvnHU-Nz-_U8LoLM5GlknXiRJ9Nud9fUL9KOvEZz0LdQ/exec?action=saveOrder' +
+    '&callback=' + cbName +
     '&order_id=' + encodeURIComponent(orderData.order_id) +
     '&date='     + encodeURIComponent(orderData.date) +
     '&name='     + encodeURIComponent(orderData.name) +
@@ -1089,13 +1098,8 @@ function confirmOrder(){
     '&payment='  + encodeURIComponent(orderData.payment) +
     '&reduce_base=' + (orderData.reduce_stock ? orderData.reduce_stock.base : 1) +
     '&reduce_bag='  + (orderData.reduce_stock ? orderData.reduce_stock.bag  : 0) +
-    '&reduce_med='  + (orderData.reduce_stock ? orderData.reduce_stock.med  : 0) +
-    '&reduce_full=' + (orderData.reduce_stock ? orderData.reduce_stock.full : 0);
-
-  var orderScript = document.createElement('script');
-  orderScript.src = 'https://script.google.com/macros/s/AKfycbwmzWg7OJL6ffR7zFwJJ-nKvnHU-Nz-_U8LoLM5GlknXiRJ9Nud9fUL9KOvEZz0LdQ/exec' + orderParams;
-  document.head.appendChild(orderScript);
-
+    '&reduce_med='  + (orderData.reduce_stock ? orderData.reduce_stock.med  : 0);
+  document.head.appendChild(s);
   var fakePromise = { then: function(fn){ fn(); return { catch: function(){} }; } };
   fakePromise
   .then(function() {
@@ -1271,34 +1275,44 @@ get('savePassBtn').addEventListener('click',function(){
 
 // Load stock from Google Sheets using JSONP (bypasses CORS)
 function loadStockFromSheets(){
-  // Use script tag injection to bypass CORS
-  window._stockCallback = function(data){
-    if(data && data.status === 'success'){
-      D.stock.base = data.stock.base !== undefined ? Number(data.stock.base) : D.stock.base;
-      D.stock.bag  = data.stock.bag  !== undefined ? Number(data.stock.bag)  : D.stock.bag;
-      D.stock.med  = data.stock.med  !== undefined ? Number(data.stock.med)  : D.stock.med;
-      D.stock.full = data.stock.full !== undefined ? Number(data.stock.full) : D.stock.full;
-      renderStock();
-      refreshOrderBtns();
-    }
-    // cleanup
-    var el = document.getElementById('_stockScript');
+  var cbName = '_gsStock_' + Date.now();
+  window[cbName] = function(data){
+    try {
+      if(data && data.status === 'success' && data.stock){
+        D.stock.base = data.stock.base !== undefined ? Number(data.stock.base) : D.stock.base;
+        D.stock.bag  = data.stock.bag  !== undefined ? Number(data.stock.bag)  : D.stock.bag;
+        D.stock.med  = data.stock.med  !== undefined ? Number(data.stock.med)  : D.stock.med;
+        D.stock.full = data.stock.full !== undefined ? Number(data.stock.full) : D.stock.full;
+        renderStock();
+        refreshOrderBtns();
+      }
+    } catch(err){ console.log('Stock parse error:', err); }
+    delete window[cbName];
+    var el = document.getElementById(cbName);
     if(el) el.parentNode.removeChild(el);
   };
   var s = document.createElement('script');
-  s.id = '_stockScript';
-  s.src = 'https://script.google.com/macros/s/AKfycbwmzWg7OJL6ffR7zFwJJ-nKvnHU-Nz-_U8LoLM5GlknXiRJ9Nud9fUL9KOvEZz0LdQ/exec?action=getStock&callback=_stockCallback';
+  s.id = cbName;
+  s.onerror = function(){ console.log('Stock fetch failed'); delete window[cbName]; };
+  s.src = 'https://script.google.com/macros/s/AKfycbwmzWg7OJL6ffR7zFwJJ-nKvnHU-Nz-_U8LoLM5GlknXiRJ9Nud9fUL9KOvEZz0LdQ/exec?action=getStock&callback=' + cbName + '&t=' + Date.now();
   document.head.appendChild(s);
 }
 
-// Save stock to Google Sheets via GET params (no CORS issues)
+// Save stock to Google Sheets via JSONP
 function saveStockToSheets(stockObj, callback){
-  var items = Object.keys(stockObj).join(',');
+  var cbName = '_gsSave_' + Date.now();
+  window[cbName] = function(data){
+    delete window[cbName];
+    var el = document.getElementById(cbName);
+    if(el) el.parentNode.removeChild(el);
+    if(callback) callback();
+  };
+  var items  = Object.keys(stockObj).join(',');
   var values = Object.keys(stockObj).map(function(k){ return stockObj[k]; }).join(',');
   var s = document.createElement('script');
-  s.src = 'https://script.google.com/macros/s/AKfycbwmzWg7OJL6ffR7zFwJJ-nKvnHU-Nz-_U8LoLM5GlknXiRJ9Nud9fUL9KOvEZz0LdQ/exec?action=updateStock&items='+encodeURIComponent(items)+'&values='+encodeURIComponent(values);
-  s.onload = function(){ if(callback) callback(); document.head.removeChild(s); };
-  s.onerror = function(){ if(callback) callback(); document.head.removeChild(s); };
+  s.id = cbName;
+  s.onerror = function(){ if(callback) callback(); };
+  s.src = 'https://script.google.com/macros/s/AKfycbwmzWg7OJL6ffR7zFwJJ-nKvnHU-Nz-_U8LoLM5GlknXiRJ9Nud9fUL9KOvEZz0LdQ/exec?action=updateStock&items=' + encodeURIComponent(items) + '&values=' + encodeURIComponent(values) + '&callback=' + cbName + '&t=' + Date.now();
   document.head.appendChild(s);
 }
 
